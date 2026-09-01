@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cosmic-ray-bayes"
+version = "0.1.0"
+description = "Readout-aware empirical-Bayes correction of cosmic rays in detector images and spectra"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+io = [
+    "pandas>=2.0",
+    "zarr>=2.15,<3",
+]
+demos = [
+    "jupyter>=1.0",
+    "matplotlib>=3.7",
+    "pandas>=2.0",
+    "zarr>=2.15,<3",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

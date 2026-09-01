@@ -1,0 +1,17 @@
+{
+    "center_wavelength_nm": 875.0,
+    "data_dtype": "int32",
+    "data_shape": [
+        100,
+        256,
+        64
+    ],
+    "data_variable": "signal",
+    "exposure_ms": 2000.0,
+    "format_version": 1,
+    "grating": 2,
+    "read_mode": "image",
+    "record_type": "point_layer_raman_collection",
+    "repeats": 100,
+    "units": "ADU"
+}
