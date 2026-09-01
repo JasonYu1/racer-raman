@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -421,3 +422,63 @@ class SpectrumCalibrator:
         if not return_info:
             return corrected
         return corrected, CorrectionInfo(changed, removed)
+
+    def correct_many(
+        self,
+        raw_spectra_adu: Any,
+        *,
+        return_info: bool = False,
+    ) -> Any:
+        """Correct a stack of spectra while preserving a DataFrame layout."""
+
+        _validate_measurement_columns(
+            "raw_spectra_adu",
+            raw_spectra_adu,
+            self._detector_columns,
+        )
+        raw = _numeric_array("raw_spectra_adu", raw_spectra_adu)
+        if raw.ndim != 2:
+            raise ValueError(
+                "raw_spectra_adu must have shape (spectra, detector columns)"
+            )
+        if raw.shape[0] == 0:
+            raise ValueError("raw_spectra_adu must contain at least one spectrum")
+        if raw.shape[1] != self._reference.master_adu.size:
+            raise ValueError(
+                "raw_spectra_adu detector columns do not match calibration"
+            )
+        if np.any(~np.isfinite(raw)):
+            raise ValueError("raw_spectra_adu must be finite")
+        if np.any(raw >= self._saturation_adu):
+            raise ValueError("raw_spectra_adu must be below saturation_adu")
+
+        corrected_rows = []
+        information = []
+        for spectrum in raw:
+            corrected, info = self.correct(spectrum, return_info=True)
+            corrected_rows.append(corrected)
+            information.append(info)
+
+        summaries = tuple(information)
+        if any(info.event_found for info in summaries):
+            corrected_values = np.stack(corrected_rows)
+            if _is_dataframe(raw_spectra_adu):
+                corrected_batch = type(raw_spectra_adu)(
+                    corrected_values,
+                    index=raw_spectra_adu.index.copy(),
+                    columns=raw_spectra_adu.columns.copy(),
+                )
+            else:
+                corrected_batch = corrected_values
+        elif _is_dataframe(raw_spectra_adu):
+            corrected_batch = raw_spectra_adu.copy(deep=True)
+        else:
+            corrected_batch = np.array(raw, copy=True)
+
+        if _is_dataframe(raw_spectra_adu):
+            corrected_batch.attrs.clear()
+            corrected_batch.attrs.update(deepcopy(dict(_metadata(raw_spectra_adu))))
+
+        if not return_info:
+            return corrected_batch
+        return corrected_batch, summaries
