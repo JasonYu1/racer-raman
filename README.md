@@ -1,8 +1,24 @@
-# Cosmic Ray Bayes
+# RACER
 
-Cosmic-ray detection and correction for detector images and row-summed spectra.
+Readout-aware cosmic-ray event removal for Raman spectroscopy.
+
+Two methods, one per detector readout mode:
+
+- **RACER-2D** corrects two-dimensional detector frames. It tests each pixel
+  against the calibrated optical row profile, so a particle is separated from
+  Raman signal by where its charge sits across the detector rows.
+- **RACER-1D** corrects row-summed (full vertical binning) spectra, where the
+  row coordinate has been summed away. It relies instead on measured charge
+  distributions and local spectral structure, switching between an
+  empirical-Bayes branch and a masked-baseline branch on bright bands.
 
 Install from the repository root with `pip install -e .`.
+
+The distribution and import package are still named `cosmic_ray_bayes`:
+
+```python
+from cosmic_ray_bayes import ImageCalibrator, SpectrumCalibrator
+```
 
 ## Workflow
 
@@ -15,7 +31,22 @@ Calibration and measurement data must use the same exposure, detector readout, b
 
 ## Examples
 
-- [Image readout](notebooks/01_image_readout.ipynb)
-- [Batch row-summed spectra](notebooks/02_row_summed_readout.ipynb)
+- [RACER-2D, image readout](notebooks/racer-2d.ipynb)
+- [RACER-1D, batch row-summed spectra](notebooks/racer-1d.ipynb)
 
 Measured closed-shutter and polystyrene Zarr data are included under [data](data/).
+
+## Relation to the published algorithms
+
+The image calibration follows Algorithm S1a of the supplement: a master dark
+from evenly spaced pilot frames, frame offsets from a decimated pixel grid, a
+clipped-mean detector variance carrying the finite-pilot correction, and a
+censored hyperexponential charge prior whose component count is selected on
+held-out event pixels rather than fixed in advance.
+
+Two caps in the image path are worth knowing before calibrating on a cropped
+region. The accepted-event area cap is the largest event seen during
+calibration, so a narrow column window sets it too low and ordinary tracks
+are then rejected rather than corrected. The column-span cap is fixed at ten
+columns, beyond which a component is treated as spectral structure rather
+than a particle.

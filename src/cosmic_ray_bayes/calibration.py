@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy import ndimage as ndi
 
+from .charge_prior import select_charge_prior
 from .image import ImageModel, ParticlePrior, build_image_model
 from .spectrum import SpectrumCalibration, build_spectrum_calibration
 
@@ -198,42 +199,133 @@ def _validated_image_stack(name: str, stack_adu: np.ndarray) -> np.ndarray:
     return data
 
 
+def _evenly_spaced_indices(n_frames: int, maximum: int) -> np.ndarray:
+    """Pick at most ``maximum`` evenly spaced frame indices, odd where possible.
+
+    An odd count keeps every pilot median an actual sample rather than the
+    mean of two, which matters because the master dark is a median.
+    """
+
+    count = min(int(n_frames), int(maximum))
+    if count > 1 and count % 2 == 0:
+        count -= 1
+    return np.unique(np.linspace(0, int(n_frames) - 1, count, dtype=int))
+
+
+def _grid_offsets(
+    frames_adu: np.ndarray,
+    reference_adu: np.ndarray,
+    *,
+    stride: int,
+) -> np.ndarray:
+    """Robust scalar offset per frame, from a spatially thinned pixel grid."""
+
+    thinned = frames_adu[:, ::stride, ::stride] - reference_adu[::stride, ::stride]
+    return np.median(thinned, axis=(1, 2))
+
+
 def _image_dark_statistics(
     dark_frames_adu: np.ndarray,
     *,
     mad_to_sigma: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    pilot = np.median(dark_frames_adu, axis=0)
-    offsets = np.median(
-        dark_frames_adu - pilot[None, :, :],
-        axis=(1, 2),
+    pilot_frames: int,
+    offset_stride: int,
+    variance_clip_sigma: float,
+    minimum_sigma_adu: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Master dark, detector variance, frame offsets, residuals and scale.
+
+    Implements Algorithm S1a steps 1.1-1.9 of the supplement.  The pilot
+    frames supply the master dark and the per-pixel scale; the full stack
+    supplies the variance and the event catalogue.  Everything is in ADU.
+    """
+
+    n_frames = int(dark_frames_adu.shape[0])
+    pilot_index = _evenly_spaced_indices(n_frames, pilot_frames)
+    pilot = dark_frames_adu[pilot_index]
+
+    # S1a.1-1.3  preliminary dark, pilot offsets on the thinned grid, master.
+    reference = np.median(pilot, axis=0)
+    pilot_offsets = _grid_offsets(pilot, reference, stride=offset_stride)
+    pilot = pilot - pilot_offsets[:, None, None]
+    master = np.median(pilot, axis=0)
+
+    # S1a.4  per-pixel scale from the pilot residuals, inner median removed.
+    pilot_residual = pilot - master[None, :, :]
+    centre = np.median(pilot_residual, axis=0, keepdims=True)
+    sigma = mad_to_sigma * np.median(np.abs(pilot_residual - centre), axis=0)
+
+    # S1a.5  scale floor, used here and by every event threshold.
+    finite_sigma = sigma[np.isfinite(sigma) & (sigma > 0)]
+    if finite_sigma.size == 0:
+        raise ValueError("dark frames do not contain measurable temporal variance")
+    scale = np.maximum(
+        sigma,
+        max(float(np.median(finite_sigma)), float(minimum_sigma_adu)),
     )
-    aligned = dark_frames_adu - offsets[:, None, None]
-    master = np.median(aligned, axis=0)
-    residual = aligned - master[None, :, :]
-    sigma = mad_to_sigma * np.median(np.abs(residual), axis=0)
-    variance = np.square(sigma)
+
+    # S1a.6  re-estimate every frame's offset against the master.
+    offsets = _grid_offsets(dark_frames_adu, master, stride=offset_stride)
+    residual = dark_frames_adu - offsets[:, None, None] - master[None, :, :]
+
+    # S1a.7  clipped mean of the squared residuals; the scale squared where
+    # the clip retains at most one frame.
+    inlier = np.abs(residual) < variance_clip_sigma * scale[None, :, :]
+    retained = np.count_nonzero(inlier, axis=0)
+    variance = np.divide(
+        np.sum(np.where(inlier, np.square(residual), 0.0), axis=0),
+        retained,
+        out=np.square(scale),
+        where=retained > 1,
+    )
+
+    # S1a.8  remove the known inflation from the finite-pilot median.
+    variance = variance / (1.0 + np.pi / (2.0 * pilot_index.size))
+
+    # S1a.9  floor at the global median of the finite positive variance.
     positive = variance[np.isfinite(variance) & (variance > 0)]
     if positive.size == 0:
         raise ValueError("dark frames do not contain measurable temporal variance")
     variance = np.maximum(variance, float(np.median(positive)))
-    return master, variance, offsets, residual
+    return master, variance, offsets, residual, scale
+
+
+@dataclass(frozen=True)
+class _DarkEvents:
+    """Per-pixel event catalogue from the closed-shutter stack.
+
+    Every field except ``size`` is one entry per event pixel; ``size`` is one
+    entry per connected component.
+    """
+
+    charge_adu: np.ndarray
+    zscore: np.ndarray
+    row: np.ndarray
+    frame: np.ndarray
+    at_ceiling: np.ndarray
+    size: np.ndarray
 
 
 def _image_dark_events(
     dark_frames_adu: np.ndarray,
     residual_adu: np.ndarray,
-    variance_adu2: np.ndarray,
+    scale_adu: np.ndarray,
     *,
     saturation_adu: float,
     seed_sigma: float,
     growth_sigma: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    zscore = residual_adu / np.sqrt(variance_adu2)[None, :, :]
+    ceiling_adu: float,
+) -> _DarkEvents:
+    # Algorithm S1a steps 1.10-1.11: the thresholds use the floored per-pixel
+    # scale of step 1.5, not the square root of the clipped variance.
+    zscore = residual_adu / scale_adu[None, :, :]
     zscore[dark_frames_adu >= saturation_adu] = -np.inf
     event_charges: list[float] = []
-    event_sizes: list[int] = []
+    event_zscores: list[float] = []
     event_rows: list[int] = []
+    event_frames: list[int] = []
+    event_at_ceiling: list[bool] = []
+    event_sizes: list[int] = []
     connectivity = np.ones((3, 3), dtype=bool)
     for frame in range(dark_frames_adu.shape[0]):
         labels, _ = ndi.label(zscore[frame] >= growth_sigma, connectivity)
@@ -244,13 +336,24 @@ def _image_dark_events(
             component = labels == label
             rows, _ = np.nonzero(component)
             charges = residual_adu[frame, component]
+            # Step 6 drops an event whose peak reached the ADC ceiling: its
+            # charge is a lower bound, not a measurement.
+            at_ceiling = bool(
+                np.max(dark_frames_adu[frame][component]) >= ceiling_adu
+            )
             event_charges.extend(charges.tolist())
+            event_zscores.extend(zscore[frame][component].tolist())
             event_rows.extend(rows.tolist())
+            event_frames.extend([frame] * charges.size)
+            event_at_ceiling.extend([at_ceiling] * charges.size)
             event_sizes.append(int(charges.size))
-    return (
-        np.sort(np.asarray(event_charges, dtype=np.float64)),
-        np.asarray(event_sizes, dtype=np.int32),
-        np.asarray(event_rows, dtype=np.int32),
+    return _DarkEvents(
+        charge_adu=np.asarray(event_charges, dtype=np.float64),
+        zscore=np.asarray(event_zscores, dtype=np.float64),
+        row=np.asarray(event_rows, dtype=np.int32),
+        frame=np.asarray(event_frames, dtype=np.int32),
+        at_ceiling=np.asarray(event_at_ceiling, dtype=bool),
+        size=np.asarray(event_sizes, dtype=np.int32),
     )
 
 
@@ -275,13 +378,20 @@ def calibrate_image(
     gain_e_per_adu: float = 0.7,
     mad_to_sigma: float = 1.4826,
     saturation_adu: float = 65535.0,
+    pilot_frames: int = 31,
+    offset_stride: int = 8,
+    variance_clip_sigma: float = 6.0,
+    minimum_sigma_adu: float = 0.5,
     event_seed_sigma: float = 8.0,
     event_grow_sigma: float = 3.0,
     trace_half_width_rows: int = 12,
     profile_smoothing_width_columns: int = 9,
     ridge_smoothing_width_columns: int = 15,
     row_smoothing_width: int = 9,
-    amplitude_components: int = 4,
+    maximum_amplitude_components: int = 5,
+    charge_ceiling_adu: float = 65000.0,
+    inner_validation_fraction: float = 0.20,
+    charge_prior_seed: int = 0,
 ) -> ImageCalibration:
     """Build a 2-D model from closed-shutter and sample training stacks."""
 
@@ -295,6 +405,10 @@ def calibrate_image(
     gain = _positive_float("gain_e_per_adu", gain_e_per_adu)
     mad_scale = _positive_float("mad_to_sigma", mad_to_sigma)
     saturation = _positive_float("saturation_adu", saturation_adu)
+    n_pilot = _positive_integer("pilot_frames", pilot_frames)
+    stride = _positive_integer("offset_stride", offset_stride)
+    clip_sigma = _positive_float("variance_clip_sigma", variance_clip_sigma)
+    sigma_floor = _positive_float("minimum_sigma_adu", minimum_sigma_adu)
     seed_threshold = _positive_float("event_seed_sigma", event_seed_sigma)
     growth_threshold = _positive_float("event_grow_sigma", event_grow_sigma)
     if seed_threshold <= growth_threshold:
@@ -314,34 +428,71 @@ def calibrate_image(
         ridge_smoothing_width_columns,
     )
     row_width = _positive_integer("row_smoothing_width", row_smoothing_width)
-    component_count = _positive_integer("amplitude_components", amplitude_components)
+    maximum_components = _positive_integer(
+        "maximum_amplitude_components",
+        maximum_amplitude_components,
+    )
+    ceiling = _positive_float("charge_ceiling_adu", charge_ceiling_adu)
+    inner_fraction = float(inner_validation_fraction)
+    if not 0.0 < inner_fraction < 1.0:
+        raise ValueError("inner_validation_fraction must lie strictly in (0, 1)")
+    prior_seed = int(charge_prior_seed)
 
-    master, dark_variance, dark_offsets, dark_residual = _image_dark_statistics(
+    (
+        master,
+        dark_variance,
+        dark_offsets,
+        dark_residual,
+        dark_scale,
+    ) = _image_dark_statistics(
         dark,
         mad_to_sigma=mad_scale,
+        pilot_frames=n_pilot,
+        offset_stride=stride,
+        variance_clip_sigma=clip_sigma,
+        minimum_sigma_adu=sigma_floor,
     )
-    charges, event_sizes, event_rows = _image_dark_events(
+    events = _image_dark_events(
         dark,
         dark_residual,
-        dark_variance,
+        dark_scale,
         saturation_adu=saturation,
         seed_sigma=seed_threshold,
         growth_sigma=growth_threshold,
+        ceiling_adu=ceiling,
     )
-    if event_sizes.size == 0:
+    if events.size.size == 0:
         raise ValueError("closed-shutter stack contains no detected particle events")
-    if charges.size < component_count:
-        raise ValueError("too few event pixels for amplitude_components")
-    charge_groups = np.array_split(charges, component_count)
-    amplitude_scales = np.asarray(
-        [float(np.mean(group)) for group in charge_groups],
-        dtype=np.float64,
+
+    # Algorithm S1a steps 5-6.  The amplitude sample drops ceiling events and
+    # non-positive charges; each surviving pixel carries the censoring
+    # threshold L_j = 3 Chat_j / nu_j, and the component count is chosen on a
+    # held-out partition of the dark frames rather than fixed in advance.
+    usable = (~events.at_ceiling) & (events.charge_adu > 0.0)
+    charges = events.charge_adu[usable]
+    if charges.size < 2 * maximum_components:
+        raise ValueError("too few event pixels to fit the charge prior")
+    thresholds = np.minimum(
+        3.0 * charges / np.clip(events.zscore[usable], 1e-12, None),
+        charges,
     )
-    amplitude_weights = np.asarray(
-        [group.size for group in charge_groups],
-        dtype=np.float64,
+    validation_start = int(
+        np.ceil((1.0 - inner_fraction) * float(dark.shape[0]))
     )
-    amplitude_weights /= charges.size
+    inner_fit = events.frame[usable] < max(1, validation_start)
+    if not inner_fit.any() or inner_fit.all():
+        inner_fit = np.arange(charges.size) % 5 != 4
+    prior_fit = select_charge_prior(
+        charges,
+        thresholds,
+        inner_fit,
+        maximum_components=maximum_components,
+        random_seed=prior_seed,
+    )
+    amplitude_scales = np.asarray(prior_fit["scales_adu"], dtype=np.float64)
+    amplitude_weights = np.asarray(prior_fit["weights"], dtype=np.float64)
+    event_sizes = events.size
+    event_rows = events.row
     row_counts = np.bincount(event_rows, minlength=dark.shape[1]).astype(np.float64)
     row_counts = ndi.uniform_filter1d(
         row_counts,
@@ -445,7 +596,7 @@ def calibrate_image(
         dark_variance_adu2=dark_variance,
         dark_frame_offsets_adu=dark_offsets,
         n_dark_events=int(event_sizes.size),
-        n_dark_event_pixels=int(charges.size),
+        n_dark_event_pixels=int(events.charge_adu.size),
     )
 
 
