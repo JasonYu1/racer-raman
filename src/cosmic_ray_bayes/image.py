@@ -851,6 +851,11 @@ def _base_inference(
         )
         baseline_spectrum = np.asarray(result["spectrum"], dtype=np.float64)
 
+    # A column that is never corrected returns the baseline extraction, so
+    # its reported uncertainty has to come from the baseline solve. The
+    # evidence loop below rebinds `result`, so capture it here.
+    baseline_solve = result
+
     spectrum = baseline_spectrum.copy()
     event_probability = np.zeros_like(profile)
     expected_charge = np.zeros_like(profile)
@@ -935,6 +940,7 @@ def _base_inference(
         "prior_mean": prior_mean,
         "prior_precision": prior_precision,
         "baseline_spectrum": baseline_spectrum,
+        "baseline_solve": baseline_solve,
         "provisional_spectrum": provisional,
         "event_probability": event_probability,
         "expected_charge": expected_charge,
@@ -1269,7 +1275,7 @@ def _profile_extract(
     spectrum = baseline.copy()
     spectrum[corrected] = np.asarray(refit["spectrum"], dtype=float)[corrected]
     spectrum_variance = np.full(n_columns, np.inf, dtype=float)
-    baseline_variance = np.asarray(base["solve"]["variance"], dtype=float)
+    baseline_variance = np.asarray(base["baseline_solve"]["variance"], dtype=float)
     spectrum_variance[states["unchanged"]] = baseline_variance[states["unchanged"]]
     spectrum_variance[corrected] = (
         np.asarray(refit["variance"], dtype=float)[corrected]
