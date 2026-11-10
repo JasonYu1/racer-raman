@@ -371,11 +371,102 @@ def _aligned_image_template(
     return np.median(aligned, axis=0) - dark_master_adu
 
 
+def _plain_profile_spectrum(
+    frame_adu: np.ndarray,
+    background_adu: np.ndarray,
+    model: ImageModel,
+    *,
+    gain: float,
+    iterations: int = 3,
+) -> np.ndarray:
+    """No-rejection profile-weighted extraction on the calibrated support."""
+
+    support_y = model.support_y
+    support_x = model.support_x
+    weights = model.support_profile
+    n_columns = int(model.profile.shape[1])
+    signal = (np.asarray(frame_adu, dtype=np.float64)[support_y, support_x]
+              - np.asarray(background_adu, dtype=np.float64)[support_y, support_x])
+    detector = np.asarray(model.support_detector_variance_adu2, dtype=np.float64)
+    variance = detector.copy()
+    spectrum = np.zeros(n_columns, dtype=np.float64)
+    for _ in range(max(1, int(iterations))):
+        precision = np.bincount(
+            support_x, weights=weights * weights / variance, minlength=n_columns)
+        right_hand = np.bincount(
+            support_x, weights=weights * signal / variance, minlength=n_columns)
+        spectrum = np.divide(
+            right_hand, precision,
+            out=np.zeros_like(right_hand), where=precision > 0)
+        optical_mean = weights * np.clip(spectrum[support_x], 0.0, None)
+        variance = detector + optical_mean / gain
+    return spectrum
+
+
+def _profile_residual(
+    sample_frames_adu: np.ndarray,
+    background_adu: np.ndarray,
+    model: ImageModel,
+    *,
+    gain: float,
+    maximum_frames: int,
+) -> np.ndarray:
+    """Median fractional profile residual, Algorithm S1a steps 17-18.
+
+    The inference model carries no term for the optical profile being
+    slightly wrong, so a static shape error in P has nowhere to go but the
+    particle-charge channel, where it is read as a cosmic ray.  The residual
+    is taken as a fraction of the extracted spectrum rather than in ADU
+    because the error scales with the signal: it is a shape error, not an
+    offset, so a raw ADU map would not transfer between frames or exposures.
+    """
+
+    profile = np.asarray(model.profile, dtype=np.float64)
+    support = profile > 0.0
+    background = np.asarray(background_adu, dtype=np.float64)
+    stack: list[np.ndarray] = []
+    for frame in np.asarray(sample_frames_adu[:maximum_frames], dtype=np.float64):
+        spectrum = _plain_profile_spectrum(frame, background, model, gain=gain)
+        usable = np.isfinite(spectrum) & (spectrum > 0.0)
+        if not np.any(usable):
+            continue
+        residual = np.zeros_like(profile)
+        observed = frame - background
+        with np.errstate(invalid="ignore", divide="ignore"):
+            residual[:, usable] = (
+                observed[:, usable] - profile[:, usable] * spectrum[usable]
+            ) / spectrum[usable]
+        residual[~support] = 0.0
+        stack.append(residual)
+    if not stack:
+        return np.zeros_like(profile)
+    return np.median(np.stack(stack), axis=0)
+
+
+def _corrected_profile(
+    profile: np.ndarray,
+    residual: np.ndarray,
+) -> np.ndarray:
+    """P' = normalise(max(0, P + rho)) on the existing support."""
+
+    profile = np.asarray(profile, dtype=np.float64)
+    support = profile > 0.0
+    updated = np.clip(profile + np.asarray(residual, dtype=np.float64), 0.0, None)
+    updated[~support] = 0.0
+    total = updated.sum(axis=0)
+    positive = total > 0.0
+    updated[:, positive] /= total[positive]
+    # A column whose correction annihilates the profile keeps the original.
+    updated[:, ~positive] = profile[:, ~positive]
+    return updated
+
+
 def calibrate_image(
     dark_frames_adu: np.ndarray,
     sample_profile_frames_adu: np.ndarray,
     *,
     gain_e_per_adu: float = 0.7,
+    profile_training_frames: int = 25,
     mad_to_sigma: float = 1.4826,
     saturation_adu: float = 65535.0,
     pilot_frames: int = 31,
@@ -431,6 +522,10 @@ def calibrate_image(
     maximum_components = _positive_integer(
         "maximum_amplitude_components",
         maximum_amplitude_components,
+    )
+    training_frames = _positive_integer(
+        "profile_training_frames",
+        profile_training_frames,
     )
     ceiling = _positive_float("charge_ceiling_adu", charge_ceiling_adu)
     inner_fraction = float(inner_validation_fraction)
@@ -598,8 +693,30 @@ def calibrate_image(
         # weight with a full variance term.
         relative_profile_floor=0.002,
     )
+
+    # Algorithm S1a steps 17-18: correct the profile against its own
+    # training frames before shipping it.  The first model is built only to
+    # supply the support and the extraction weights the residual is measured
+    # with; what the caller receives is the corrected profile.
+    background = master + diffuse[None, :]
+    profile_residual = _profile_residual(
+        sample,
+        background,
+        model,
+        gain=gain,
+        maximum_frames=training_frames,
+    )
+    model = build_image_model(
+        optical_template,
+        trace_mask,
+        particle_prior,
+        detector_variance_adu2=detector_variance,
+        spatial_profile_template=_corrected_profile(model.profile, profile_residual),
+        template_spectrum_adu=template_spectrum,
+        relative_profile_floor=0.002,
+    )
     return ImageCalibration(
-        background_adu=master + diffuse[None, :],
+        background_adu=background,
         model=model,
         dark_master_adu=master,
         dark_variance_adu2=dark_variance,

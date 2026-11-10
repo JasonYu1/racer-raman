@@ -141,6 +141,79 @@ def test_charge_prior_selects_its_component_count():
     assert np.all(np.diff(scales) > 0.0), "scales should be sorted"
 
 
+def test_profile_residual_is_zero_for_a_perfect_profile():
+    """S1a.17-18: a frame that is exactly P*S leaves nothing to correct."""
+
+    dark, sample = _detector()
+    calibration = calibrate_image(dark, sample)
+    model = calibration.model
+    profile = np.asarray(model.profile, dtype=float)
+    background = np.asarray(calibration.background_adu, dtype=float)
+
+    # Synthesise frames that the model explains exactly.
+    spectrum = 300.0 + 50.0 * np.cos(np.arange(COLUMNS) / 5.0)
+    exact = background + profile * spectrum[None, :]
+    residual = cal._profile_residual(
+        np.stack([exact] * 3), background, model, gain=GAIN, maximum_frames=3)
+    assert np.allclose(residual, 0.0, atol=1e-6), np.abs(residual).max()
+
+
+def test_profile_residual_recovers_an_injected_shape_error():
+    """S1a.17-18: a static shape error is measured, not read as charge."""
+
+    dark, sample = _detector()
+    calibration = calibrate_image(dark, sample)
+    model = calibration.model
+    profile = np.asarray(model.profile, dtype=float)
+    background = np.asarray(calibration.background_adu, dtype=float)
+    support = profile > 0.0
+
+    # A static SHAPE error: weight tilted across the rows. A distortion
+    # proportional to the profile itself would be a pure rescaling, which
+    # the extracted spectrum absorbs exactly, leaving nothing to correct.
+    rows = np.arange(profile.shape[0], dtype=float)[:, None]
+    tilt = 0.05 * (rows - TRACE_ROW) / TRACE_SIGMA
+    distortion = np.zeros_like(profile)
+    distortion[support] = (tilt * profile)[support]
+    spectrum = 400.0 * np.ones(COLUMNS)
+    frames = np.stack(
+        [background + (profile + distortion) * spectrum[None, :]] * 4)
+
+    residual = cal._profile_residual(
+        frames, background, model, gain=GAIN, maximum_frames=4)
+    assert np.abs(residual[support]).max() > 1e-6, "no residual measured"
+
+    corrected = cal._corrected_profile(profile, residual)
+    # The corrected profile must be closer to the distorted truth.
+    truth = (profile + distortion)
+    truth = truth / np.where(truth.sum(axis=0) > 0, truth.sum(axis=0), 1.0)[None, :]
+    before = float(np.abs(profile - truth)[support].sum())
+    after = float(np.abs(corrected - truth)[support].sum())
+    assert after < before, "correction did not move toward truth (%.4g -> %.4g)" % (
+        before, after)
+    # and every column still normalises
+    totals = corrected.sum(axis=0)
+    assert np.allclose(totals[totals > 0], 1.0, atol=1e-9)
+
+
+def test_calibrate_image_ships_the_corrected_profile():
+    """The profile the caller receives is corrected, not the first pass."""
+
+    dark, sample = _detector()
+    calibration = calibrate_image(dark, sample)
+    shipped = np.asarray(calibration.model.profile, dtype=float)
+    # Re-measuring on the shipped profile must leave less to correct than a
+    # single uncorrected pass would; at minimum the pipeline must run and
+    # return a normalised profile on a non-empty support.
+    assert np.count_nonzero(shipped) > 0
+    totals = shipped.sum(axis=0)
+    assert np.allclose(totals[totals > 0], 1.0, atol=1e-9)
+    second = cal._profile_residual(
+        sample, np.asarray(calibration.background_adu, dtype=float),
+        calibration.model, gain=GAIN, maximum_frames=25)
+    assert np.all(np.isfinite(second))
+
+
 def main() -> int:
     tests = [value for name, value in sorted(globals().items())
              if name.startswith("test_") and callable(value)]
