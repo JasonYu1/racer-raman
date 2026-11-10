@@ -484,6 +484,9 @@ def calibrate_image(
     profile_smoothing_width_columns: int = 9,
     ridge_smoothing_width_columns: int = 15,
     row_smoothing_width: int = 9,
+    row_smoothing_sigma_rows: float = 6.0,
+    minimum_row_probability: float = 1.0e-10,
+    maximum_row_probability: float = 0.05,
     maximum_amplitude_components: int = 5,
     charge_ceiling_adu: float = 65000.0,
     inner_validation_fraction: float = 0.20,
@@ -534,6 +537,14 @@ def calibrate_image(
         ridge_smoothing_width_columns,
     )
     row_width = _positive_integer("row_smoothing_width", row_smoothing_width)
+    row_sigma = _positive_float("row_smoothing_sigma_rows", row_smoothing_sigma_rows)
+    probability_floor = _positive_float(
+        "minimum_row_probability", minimum_row_probability)
+    probability_cap = _positive_float(
+        "maximum_row_probability", maximum_row_probability)
+    if probability_floor >= probability_cap:
+        raise ValueError(
+            "minimum_row_probability must be below maximum_row_probability")
     maximum_components = _positive_integer(
         "maximum_amplitude_components",
         maximum_amplitude_components,
@@ -604,14 +615,17 @@ def calibrate_image(
     event_sizes = events.size
     event_rows = events.row
     row_counts = np.bincount(event_rows, minlength=dark.shape[1]).astype(np.float64)
-    row_counts = ndi.uniform_filter1d(
-        row_counts,
-        size=row_width,
-        mode="nearest",
-    )
+    # Algorithm S1a step 2: a Gaussian of sigma_pi rows, not a box. A box of
+    # width 9 has an equivalent sigma near 2.6, so it leaves the box-edge
+    # structure of the raw per-row counts in the prior.
+    row_counts = ndi.gaussian_filter1d(row_counts, sigma=row_sigma, mode="nearest")
     row_probability = (row_counts + 0.5) / (
         dark.shape[0] * dark.shape[2] + 0.5 * dark.shape[1]
     )
+    # Algorithm S1a step 4: the calibrated probability bounds are applied
+    # after fitting. Without the upper bound a hot-pixel row or a light leak
+    # can drive a row prior arbitrarily close to one.
+    row_probability = np.clip(row_probability, probability_floor, probability_cap)
     particle_prior = ParticlePrior(
         row_probability=row_probability,
         amplitude_scales_adu=amplitude_scales,

@@ -56,7 +56,11 @@ class BayesianSpectrumConfig:
     width_run_sigma: float = 1.0
     width_baseline_columns: int = 101
     width_assignment_rel_height: float = 0.95
-    width_penalty_weight: float = 1.0
+    # The supplement describes no width prior on the posterior odds, and the
+    # released hybrid configuration sets this to zero. The class default now
+    # matches it, so nothing the published method does not describe is active
+    # unless a caller asks for it explicitly.
+    width_penalty_weight: float = 0.0
     maximum_particle_width: float = 13.0
     limit_accepted_run: bool = False
     continuum_maximum_particle_width: int = 10

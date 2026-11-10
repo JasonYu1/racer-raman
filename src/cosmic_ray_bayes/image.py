@@ -29,7 +29,7 @@ class ParticlePrior:
     row_probability: np.ndarray
     amplitude_scales_adu: np.ndarray
     amplitude_weights: np.ndarray
-    maximum_event_pixels: int | None = None
+    maximum_event_pixels: int
 
     def __post_init__(self) -> None:
         row_probability = np.array(self.row_probability, dtype=np.float64, copy=True)
@@ -218,7 +218,6 @@ class ImageConfig:
     use_diagonal_connectivity: bool = True
     maximum_component_width_columns: int = 10
     uncertainty_inflation: float = 1.0
-    frame_offset_mode: str = "zero"
     halo_radius: int = 1
     halo_residual_z: float = 0.0
     halo_conditional_prior: float = 0.5
@@ -270,8 +269,6 @@ class ImageConfig:
             raise ValueError("ring radii must be positive")
         if any(int(value) < 1 for value in self.ring_minimum_counts):
             raise ValueError("ring minimum counts must be positive")
-        if self.frame_offset_mode.lower() not in {"zero", "median"}:
-            raise ValueError("frame_offset_mode must be 'zero' or 'median'")
         if int(self.halo_radius) < 0:
             raise ValueError("halo_radius must be a nonnegative integer")
         if not np.isfinite(self.halo_residual_z):
@@ -662,12 +659,19 @@ def _solve_spectrum_update(
     data_precision = _column_sum(
         support_x, clean_probability * profile**2 * inverse_variance, n_columns
     )
+    # Algorithm S1c statements 16.1-16.2: the refit sums run over I_x. An
+    # excluded pixel has its clean weight and inverse variance zeroed, but a
+    # non-finite expected charge still propagates NaN through the product,
+    # so mask the residual before the column sum rather than relying on the
+    # zero weights to suppress it.
+    residual = np.where(
+        np.isfinite(expected_charge),
+        signal_support - expected_charge,
+        0.0,
+    )
     data_rhs = _column_sum(
         support_x,
-        clean_probability
-        * profile
-        * (signal_support - expected_charge)
-        * inverse_variance,
+        clean_probability * profile * residual * inverse_variance,
         n_columns,
     )
     denominator = data_precision + prior_precision
@@ -808,13 +812,9 @@ def _base_inference(
         & np.isfinite(profile)
         & (profile > 0)
     )
-    if config.frame_offset_mode.lower() == "zero":
-        frame_offset = 0.0
-    else:
-        difference = frame - background
-        finite = difference[np.isfinite(difference)]
-        frame_offset = float(np.median(finite)) if finite.size else np.nan
-    signal_support = raw_support - background[y, x] - frame_offset
+    # Algorithm S1b statement 1: X_i = Y_i - D_i(t) - B_i^inst, and nothing
+    # further. The frame offset was removed with the dark in Algorithm S1a.
+    signal_support = raw_support - background[y, x]
     prior_mean, prior_precision, initial_variance = _reference_terms(
         signal_support, model, config
     )
@@ -929,7 +929,6 @@ def _base_inference(
     provisional = spectrum.copy()
     provisional[abstain] = baseline_spectrum[abstain]
     return {
-        "frame_offset_adu": frame_offset,
         "signal_support": signal_support,
         "available_support": evidence_finite,
         "profile_support": profile,
@@ -1135,10 +1134,10 @@ def _profile_extract(
     accepted_image = np.zeros_like(grown)
     out_of_model_image = np.zeros_like(grown)
     raw = np.asarray(frame, dtype=float)
-    maximum_pixels = model.particle_prior.maximum_event_pixels
-    maximum_pixels = (
-        int(maximum_pixels) if maximum_pixels is not None else np.iinfo(np.int32).max
-    )
+    # Algorithm S1c statement 8 accepts a component only when |e| <= A_max.
+    # A_max is a calibrated quantity, so there is no sentinel that would let
+    # the area clause pass for every component.
+    maximum_pixels = int(model.particle_prior.maximum_event_pixels)
     for label_id in range(1, int(count) + 1):
         component = labels == label_id
         yy, xx = np.nonzero(component)
@@ -1355,7 +1354,6 @@ def clean_image(
         spectrum = np.asarray(result["spectrum"], dtype=np.float64)
         fitted = (
             background[y, x]
-            + float(result["frame_offset_adu"])
             + np.asarray(model.support_profile, dtype=np.float64) * spectrum[x]
         )
         replace = accepted & np.isfinite(fitted)

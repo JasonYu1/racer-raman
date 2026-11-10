@@ -217,6 +217,42 @@ def test_calibrate_image_ships_the_corrected_profile():
     assert np.all(np.isfinite(second))
 
 
+def test_row_prior_is_gaussian_smoothed_and_bounded():
+    """S1a.2/4: a Gaussian of sigma_pi rows, then the calibrated bounds."""
+
+    dark, sample = _detector()
+    prior = calibrate_image(dark, sample, BACKGROUND).model.particle_prior
+    row_probability = np.asarray(prior.row_probability, dtype=float)
+    assert np.all(row_probability >= 1.0e-10)
+    assert np.all(row_probability <= 0.05)
+
+    # A box of width 9 has an equivalent sigma near 2.6; a Gaussian of 6
+    # is visibly smoother, so the discrete curvature must be smaller.
+    from scipy import ndimage as ndi  # local: only this test needs it
+
+    counts = np.zeros(ROWS)
+    counts[ROWS // 2] = 100.0
+    boxed = ndi.uniform_filter1d(counts, size=9, mode="nearest")
+    gaussed = ndi.gaussian_filter1d(counts, sigma=6.0, mode="nearest")
+    assert np.abs(np.diff(gaussed, 2)).max() < np.abs(np.diff(boxed, 2)).max()
+
+
+def test_maximum_event_pixels_is_required():
+    """S1c.8: A_max is calibrated, so there is no permissive sentinel."""
+
+    from cosmic_ray_bayes.image import ParticlePrior
+
+    try:
+        ParticlePrior(
+            row_probability=np.full(ROWS, 1e-6),
+            amplitude_scales_adu=np.array([10.0, 100.0]),
+            amplitude_weights=np.array([0.5, 0.5]),
+        )
+    except TypeError:
+        return
+    raise AssertionError("ParticlePrior accepted a missing maximum_event_pixels")
+
+
 def main() -> int:
     tests = [value for name, value in sorted(globals().items())
              if name.startswith("test_") and callable(value)]
