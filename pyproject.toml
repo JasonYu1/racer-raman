@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,12 +7,43 @@ name = "racer-raman"
 version = "0.1.0"
 description = "Readout-aware empirical-Bayes correction of cosmic rays in detector images and spectra"
 readme = "README.md"
-license = {file = "LICENSE"}
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
+authors = [
+    {name = "Jason W. Yu"},
+    {name = "Doeke R. Hekstra"},
+]
+keywords = [
+    "raman",
+    "spectroscopy",
+    "cosmic ray",
+    "despiking",
+    "ccd",
+    "empirical bayes",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Physics",
+]
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
 ]
+
+[project.urls]
+Homepage = "https://github.com/JasonYu1/racer-raman"
+Repository = "https://github.com/JasonYu1/racer-raman"
+Issues = "https://github.com/JasonYu1/racer-raman/issues"
 
 [project.optional-dependencies]
 io = [
