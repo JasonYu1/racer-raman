@@ -38,21 +38,6 @@ Calibration and measurement data must use the same exposure, detector readout, b
 
 Measured closed-shutter and polystyrene Zarr data are included under [data](data/).
 
-## Relation to the published algorithms
-
-The image calibration follows Algorithm S1a of the supplement: a master dark
-from evenly spaced pilot frames, frame offsets from a decimated pixel grid, a
-clipped-mean detector variance carrying the finite-pilot correction, and a
-censored hyperexponential charge prior whose component count is selected on
-held-out event pixels rather than fixed in advance.
-
-Two caps in the image path are worth knowing before calibrating on a cropped
-region. The accepted-event area cap is the largest event seen during
-calibration, so a narrow column window sets it too low and ordinary tracks
-are then rejected rather than corrected. The column-span cap is fixed at ten
-columns, beyond which a component is treated as spectral structure rather
-than a particle.
-
 ## License
 
 MIT. See [LICENSE](LICENSE).
