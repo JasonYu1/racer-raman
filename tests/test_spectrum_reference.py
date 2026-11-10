@@ -24,8 +24,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from cosmic_ray_bayes import calibration as cal  # noqa: E402
-from cosmic_ray_bayes.spectrum import build_spectrum_calibration  # noqa: E402
+from racer_raman import calibration as cal  # noqa: E402
+from racer_raman.spectrum import build_spectrum_calibration  # noqa: E402
 
 COLUMNS = 64
 FRAMES = 40

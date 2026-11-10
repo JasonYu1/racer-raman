@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cosmic-ray-bayes"
+name = "racer-raman"
 version = "0.1.0"
 description = "Readout-aware empirical-Bayes correction of cosmic rays in detector images and spectra"
 readme = "README.md"

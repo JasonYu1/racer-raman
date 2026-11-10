@@ -14,10 +14,8 @@ Two methods, one per detector readout mode:
 
 Install from the repository root with `pip install -e .`.
 
-The distribution and import package are still named `cosmic_ray_bayes`:
-
 ```python
-from cosmic_ray_bayes import ImageCalibrator, SpectrumCalibrator
+from racer_raman import ImageCalibrator, SpectrumCalibrator
 ```
 
 ## Workflow

@@ -19,8 +19,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from cosmic_ray_bayes import calibrate_image  # noqa: E402
-from cosmic_ray_bayes import calibration as cal  # noqa: E402
+from racer_raman import calibrate_image  # noqa: E402
+from racer_raman import calibration as cal  # noqa: E402
 
 GAIN = 0.7
 PEDESTAL = 4000.0
@@ -240,7 +240,7 @@ def test_row_prior_is_gaussian_smoothed_and_bounded():
 def test_maximum_event_pixels_is_required():
     """S1c.8: A_max is calibrated, so there is no permissive sentinel."""
 
-    from cosmic_ray_bayes.image import ParticlePrior
+    from racer_raman.image import ParticlePrior
 
     try:
         ParticlePrior(

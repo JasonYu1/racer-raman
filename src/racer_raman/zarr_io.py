@@ -24,7 +24,7 @@ def _optional_dependencies() -> tuple[Any, Any]:
         import zarr
     except ImportError as error:
         message = "Zarr ingestion requires pandas and zarr;"
-        message += " install cosmic-ray-bayes[io]"
+        message += " install racer-raman[io]"
         raise ImportError(message) from error
     return pd, zarr
 
