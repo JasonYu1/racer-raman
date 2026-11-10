@@ -482,8 +482,8 @@ def calibrate_image(
     event_grow_sigma: float = 3.0,
     trace_half_width_rows: int = 12,
     profile_smoothing_width_columns: int = 9,
-    ridge_smoothing_width_columns: int = 15,
-    row_smoothing_width: int = 9,
+    ridge_smoothing_width_columns: int = 101,
+    ridge_smoothing_sigma_columns: float = 12.0,
     row_smoothing_sigma_rows: float = 6.0,
     minimum_row_probability: float = 1.0e-10,
     maximum_row_probability: float = 0.05,
@@ -536,7 +536,10 @@ def calibrate_image(
         "ridge_smoothing_width_columns",
         ridge_smoothing_width_columns,
     )
-    row_width = _positive_integer("row_smoothing_width", row_smoothing_width)
+    ridge_sigma = _positive_float(
+        "ridge_smoothing_sigma_columns",
+        ridge_smoothing_sigma_columns,
+    )
     row_sigma = _positive_float("row_smoothing_sigma_rows", row_smoothing_sigma_rows)
     probability_floor = _positive_float(
         "minimum_row_probability", minimum_row_probability)
@@ -646,22 +649,17 @@ def calibrate_image(
         axis=1,
         mode="nearest",
     )
-    row_signal = ndi.uniform_filter1d(
-        measured_sample.sum(axis=1),
-        size=row_width,
-        mode="nearest",
-    )
-    trace_center = int(np.argmax(row_signal))
     detector_rows = np.arange(dark.shape[1], dtype=np.float64)[:, None]
-    centroid_window = np.abs(detector_rows - trace_center) <= half_width
-    centroid_weights = measured_sample * centroid_window
-    centroid_normalization = centroid_weights.sum(axis=0)
-    if np.any(centroid_normalization <= 0):
-        raise ValueError("sample stack must contain a trace in every detector column")
-    ridge = np.rint(
-        np.sum(detector_rows * centroid_weights, axis=0) / centroid_normalization
-    ).astype(np.intp)
-    ridge = ndi.median_filter(ridge, size=ridge_width, mode="nearest")
+    # The ridge is the per-column brightest row, then smoothed. The previous
+    # estimator anchored on a single global argmax of the row sum and took a
+    # centroid in a window about it, which cannot follow a trace that curves
+    # by more than the half-width across the detector and is pulled by any
+    # off-trace structure inside the window. A long median rejects columns
+    # where the argmax jumps, and the Gaussian leaves a smooth curve.
+    raw_ridge = np.argmax(measured_sample, axis=0).astype(np.float64)
+    ridge = ndi.median_filter(raw_ridge, size=ridge_width, mode="nearest")
+    ridge = ndi.gaussian_filter1d(ridge, sigma=ridge_sigma, mode="nearest")
+    ridge = np.clip(np.rint(ridge).astype(np.intp), 0, dark.shape[1] - 1)
     trace_mask = np.abs(detector_rows - ridge[None, :]) <= half_width
     sample_trace = measured_sample * trace_mask
     sample_normalization = sample_trace.sum(axis=0)
