@@ -53,3 +53,6 @@ are then rejected rather than corrected. The column-span cap is fixed at ten
 columns, beyond which a component is treated as spectral structure rather
 than a particle.
 
+## License
+
+MIT. See [LICENSE](LICENSE).
