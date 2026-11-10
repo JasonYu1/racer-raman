@@ -1,0 +1,50 @@
+name: Publish to TestPyPI
+
+# Manual only, and deliberately a separate file from publish.yml: the real
+# release path stays triggered solely by a published release, with no manual
+# route that could fire it by accident. This one is the rehearsal, so the
+# rendered project page can be checked before anything reaches real PyPI.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the sdist and wheel
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-test
+          path: dist/
+
+  publish:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    # Must match the environment registered with the TestPyPI trusted
+    # publisher, which is a separate account from PyPI.
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/racer-raman
+    permissions:
+      # Mints the short-lived OIDC token. No API token is stored.
+      id-token: write
+    steps:
+      # No checkout: nothing from the repository runs in the job holding the
+      # publishing credential.
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-test
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
