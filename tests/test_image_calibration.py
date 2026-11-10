@@ -28,6 +28,9 @@ READ_SIGMA = 4.0
 DIFFUSE = 4.0
 ROWS, COLUMNS, FRAMES = 64, 48, 40
 TRACE_ROW, TRACE_SIGMA = 20.0, 3.0
+# B^inst for the synthetic detector: flat, and deliberately nonzero so a
+# calibration that ignored it would show up in background_adu.
+BACKGROUND = np.full((ROWS, COLUMNS), 2.0)
 
 
 def _detector() -> tuple[np.ndarray, np.ndarray]:
@@ -99,7 +102,7 @@ def test_shot_term_uses_the_diffuse_level_not_the_dark_pedestal():
     """
 
     dark, sample = _detector()
-    calibration = calibrate_image(dark, sample)
+    calibration = calibrate_image(dark, sample, BACKGROUND)
     detector_variance = np.asarray(
         calibration.model.support_detector_variance_adu2, dtype=float)
     dark_variance = float(np.median(calibration.dark_variance_adu2))
@@ -116,7 +119,7 @@ def test_profile_support_respects_the_relative_floor():
     """S1a.19: rows below 0.002 of the column maximum are discarded."""
 
     dark, sample = _detector()
-    calibration = calibrate_image(dark, sample)
+    calibration = calibrate_image(dark, sample, BACKGROUND)
     profile = np.asarray(calibration.model.profile, dtype=float)
     column_max = profile.max(axis=0)
     kept = profile > 0.0
@@ -132,7 +135,7 @@ def test_charge_prior_selects_its_component_count():
     """S1a.6: K is chosen on held-out pixels, not fixed at four."""
 
     dark, sample = _detector()
-    prior = calibrate_image(dark, sample).model.particle_prior
+    prior = calibrate_image(dark, sample, BACKGROUND).model.particle_prior
     scales = np.asarray(prior.amplitude_scales_adu, dtype=float)
     weights = np.asarray(prior.amplitude_weights, dtype=float)
     assert 1 <= scales.size <= 5, scales.size
@@ -145,7 +148,7 @@ def test_profile_residual_is_zero_for_a_perfect_profile():
     """S1a.17-18: a frame that is exactly P*S leaves nothing to correct."""
 
     dark, sample = _detector()
-    calibration = calibrate_image(dark, sample)
+    calibration = calibrate_image(dark, sample, BACKGROUND)
     model = calibration.model
     profile = np.asarray(model.profile, dtype=float)
     background = np.asarray(calibration.background_adu, dtype=float)
@@ -162,7 +165,7 @@ def test_profile_residual_recovers_an_injected_shape_error():
     """S1a.17-18: a static shape error is measured, not read as charge."""
 
     dark, sample = _detector()
-    calibration = calibrate_image(dark, sample)
+    calibration = calibrate_image(dark, sample, BACKGROUND)
     model = calibration.model
     profile = np.asarray(model.profile, dtype=float)
     background = np.asarray(calibration.background_adu, dtype=float)
@@ -200,7 +203,7 @@ def test_calibrate_image_ships_the_corrected_profile():
     """The profile the caller receives is corrected, not the first pass."""
 
     dark, sample = _detector()
-    calibration = calibrate_image(dark, sample)
+    calibration = calibrate_image(dark, sample, BACKGROUND)
     shipped = np.asarray(calibration.model.profile, dtype=float)
     # Re-measuring on the shipped profile must leave less to correct than a
     # single uncorrected pass would; at minimum the pipeline must run and

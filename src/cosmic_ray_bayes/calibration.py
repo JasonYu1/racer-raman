@@ -32,6 +32,10 @@ class ImageCalibration:
     dark_master_adu: np.ndarray
     dark_variance_adu2: np.ndarray
     dark_frame_offsets_adu: np.ndarray
+    # b_x of Algorithm S1a step 10: the off-trace diffuse photo level, one
+    # value per column. A calibrated output in its own right, and distinct
+    # from background_adu, which is D + B^inst.
+    diffuse_photo_adu: np.ndarray
     n_dark_events: int
     n_dark_event_pixels: int
 
@@ -464,6 +468,7 @@ def _corrected_profile(
 def calibrate_image(
     dark_frames_adu: np.ndarray,
     sample_profile_frames_adu: np.ndarray,
+    instrument_background_adu: np.ndarray,
     *,
     gain_e_per_adu: float = 0.7,
     profile_training_frames: int = 25,
@@ -493,6 +498,16 @@ def calibrate_image(
     )
     if sample.shape[1:] != dark.shape[1:]:
         raise ValueError("dark and sample-profile images must match")
+    # Algorithm S1a step 8: the instrumental background is a required input.
+    # This calibration performs no exposure-series fit, so it must fail when
+    # no map is supplied rather than silently substituting something else.
+    instrument_background = np.asarray(instrument_background_adu, dtype=np.float64)
+    if instrument_background.shape != dark.shape[1:]:
+        raise ValueError(
+            "instrument_background_adu must be a 2-D map matching the detector"
+        )
+    if np.any(~np.isfinite(instrument_background)):
+        raise ValueError("instrument_background_adu must contain finite values")
     gain = _positive_float("gain_e_per_adu", gain_e_per_adu)
     mad_scale = _positive_float("mad_to_sigma", mad_to_sigma)
     saturation = _positive_float("saturation_adu", saturation_adu)
@@ -604,7 +619,11 @@ def calibrate_image(
         maximum_event_pixels=int(np.max(event_sizes)),
     )
 
-    sample_template = _aligned_image_template(sample, master)
+    # D^sub = D + B^inst, Algorithm S1a step 8. Everything downstream of the
+    # template -- b_x, the profile candidates and the residual correction --
+    # is measured against this, not against the master dark alone.
+    subtracted_dark = master + instrument_background
+    sample_template = _aligned_image_template(sample, subtracted_dark)
     sample_floor = np.percentile(sample_template, 20.0, axis=0)
     measured_sample = np.clip(sample_template - sample_floor[None, :], 0.0, None)
     measured_sample = ndi.uniform_filter1d(
@@ -698,7 +717,11 @@ def calibrate_image(
     # training frames before shipping it.  The first model is built only to
     # supply the support and the extraction weights the residual is measured
     # with; what the caller receives is the corrected profile.
-    background = master + diffuse[None, :]
+    # The subtracted background is D + B^inst. b_x is a separate calibrated
+    # quantity: it sets the per-column baseline of the profile candidates and
+    # the diffuse shot term, and is deliberately not subtracted here, since
+    # doing so would remove real diffuse signal at correction time.
+    background = subtracted_dark
     profile_residual = _profile_residual(
         sample,
         background,
@@ -721,6 +744,7 @@ def calibrate_image(
         dark_master_adu=master,
         dark_variance_adu2=dark_variance,
         dark_frame_offsets_adu=dark_offsets,
+        diffuse_photo_adu=diffuse,
         n_dark_events=int(event_sizes.size),
         n_dark_event_pixels=int(events.charge_adu.size),
     )

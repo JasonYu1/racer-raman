@@ -23,6 +23,9 @@ from cosmic_ray_bayes import ImageCalibrator, SpectrumCalibrator
 ## Workflow
 
 1. Supply matching closed-shutter and open-shutter calibration acquisitions.
+   The image path also requires the instrumental background map `B^inst`,
+   fitted separately over an open-shutter exposure series; the calibration
+   performs no exposure-series fit of its own and will not run without it.
 2. Fit an image or spectrum calibrator.
 3. Pass it one or more raw measurements.
 4. Receive corrected output when an event is detected, or an unchanged copy when no correction is needed.

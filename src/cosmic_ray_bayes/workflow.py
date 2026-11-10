@@ -232,11 +232,20 @@ class ImageCalibrator:
         cls,
         dark_frames_adu: Any,
         sample_frames_adu: Any,
+        instrument_background_adu: Any,
         *,
         gain_e_per_adu: float | None = None,
         saturation_adu: float | None = None,
     ) -> ImageCalibrator:
-        """Fit an image corrector from dark and open-shutter sample frames."""
+        """Fit an image corrector from dark and open-shutter sample frames.
+
+        ``instrument_background_adu`` is the per-pixel instrumental
+        background map B^inst, fitted separately over an open-shutter
+        exposure series. Algorithm S1a step 8 requires it: this calibration
+        performs no exposure-series fit of its own, so it cannot recover the
+        map and will not proceed without one. Pass a zero map only when the
+        instrument genuinely has no measured instrumental background.
+        """
 
         detector_columns = _matching_detector_columns(
             dark_frames_adu,
@@ -260,6 +269,7 @@ class ImageCalibrator:
         calibration = calibrate_image(
             dark,
             sample,
+            _numeric_array("instrument_background_adu", instrument_background_adu),
             gain_e_per_adu=gain,
             saturation_adu=saturation,
         )
