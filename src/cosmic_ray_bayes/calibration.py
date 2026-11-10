@@ -571,7 +571,12 @@ def calibrate_image(
         out=measured_sample_profile.copy(),
         where=normalization[None, :] > 0,
     )
-    detector_variance = dark_variance + np.clip(master, 0.0, None) / gain
+    # Algorithm S1a step 16: the shot term comes from the off-trace diffuse
+    # photo level, not from the dark master.  The master is overwhelmingly
+    # the detector pedestal, which carries no shot noise; using it inflates
+    # the detector variance by roughly the pedestal-to-diffuse ratio and
+    # collapses every event z-score in Algorithm S1b.
+    detector_variance = dark_variance + np.clip(diffuse, 0.0, None)[None, :] / gain
     numerator = np.sum(profile * optical_template / detector_variance, axis=0)
     denominator = np.sum(profile * profile / detector_variance, axis=0)
     template_spectrum = np.divide(
@@ -587,7 +592,11 @@ def calibrate_image(
         detector_variance_adu2=detector_variance,
         spatial_profile_template=profile,
         template_spectrum_adu=template_spectrum,
-        relative_profile_floor=0.0,
+        # Algorithm S1a step 19: discard rows below 0.002 of their column
+        # maximum.  build_image_model already defaults to this; passing 0.0
+        # kept every trace-mask row, each contributing a near-zero profile
+        # weight with a full variance term.
+        relative_profile_floor=0.002,
     )
     return ImageCalibration(
         background_adu=master + diffuse[None, :],
