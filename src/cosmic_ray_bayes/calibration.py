@@ -772,18 +772,33 @@ def _fill_missing(
     values: np.ndarray,
     fallback: np.ndarray | None,
 ) -> np.ndarray:
+    """Fill nonfinite columns by neighbouring interpolation, then by fallback.
+
+    The order matters.  Interpolation from the stack's own finite neighbours
+    comes first, and the fallback serves only the columns interpolation
+    cannot reach -- which is all of them when no column of the stack is
+    usable.  A column saturated or nonfinite in every frame therefore
+    inherits the local level of its neighbours rather than the pedestal of a
+    different acquisition.
+    """
+
     result = np.asarray(values, dtype=np.float64).copy()
-    missing = ~np.isfinite(result)
-    if fallback is not None and np.any(missing):
+    finite = np.isfinite(result)
+    if np.any(finite):
+        missing = np.flatnonzero(~finite)
+        if missing.size:
+            good = np.flatnonzero(finite)
+            result[missing] = np.interp(missing, good, result[good])
+    elif fallback is not None:
+        result = np.asarray(fallback, dtype=np.float64).copy()
+    if fallback is not None:
         fallback_values = np.asarray(fallback, dtype=np.float64)
-        result[missing] = fallback_values[missing]
-    missing = ~np.isfinite(result)
-    if np.any(missing):
-        finite = np.flatnonzero(np.isfinite(result))
-        if finite.size == 0:
-            raise ValueError("stack_adu contains no usable detector values")
-        locations = np.arange(result.size)
-        result[missing] = np.interp(locations[missing], finite, result[finite])
+        replace = ~np.isfinite(result) & np.isfinite(fallback_values)
+        result[replace] = fallback_values[replace]
+    if np.any(~np.isfinite(result)):
+        # No usable column anywhere and no finite fallback to stand in for
+        # one.  Refuse rather than return a fabricated level.
+        raise ValueError("stack_adu contains no usable detector values")
     return result
 
 
