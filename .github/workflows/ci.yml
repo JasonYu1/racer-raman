@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package and dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+
+      - name: Check installed dependencies
+        run: python -m pip check
+
+      # The suites are deliberately standalone: each puts src/ on sys.path and
+      # exits non-zero if any case fails, so no test runner is required.
+      - name: Run image-mode tests
+        run: python tests/test_image_calibration.py
+
+      - name: Run row-summed tests
+        run: python tests/test_spectrum_reference.py
+
+  package:
+    name: Build and inspect package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install packaging tools
+        run: python -m pip install --upgrade build twine
+
+      - name: Compile Python sources
+        run: python -m compileall -q src/racer_raman
+
+      - name: Build wheel and source distribution
+        run: python -m build
+
+      - name: Check package metadata and descriptions
+        run: python -m twine check --strict dist/*
+
+      # Install from the built wheel outside the source tree, so the check
+      # cannot be satisfied by src/ sitting on the path.
+      - name: Verify the wheel installs and imports
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          cd "$RUNNER_TEMP"
+          python -c "import importlib.metadata as md, racer_raman; print('racer-raman', md.version('racer-raman'), '-', len(racer_raman.__all__), 'exports')"
+
+      - name: Confirm the data directory stays out of the distributions
+        run: |
+          python - <<'PY'
+          import glob, tarfile, zipfile, sys
+          sdist = glob.glob("dist/*.tar.gz")[0]
+          wheel = glob.glob("dist/*.whl")[0]
+          names = tarfile.open(sdist).getnames() + zipfile.ZipFile(wheel).namelist()
+          leaked = [n for n in names if "/data/" in n or n.startswith("data/")]
+          if leaked:
+              sys.exit("data/ leaked into the distribution: %s" % leaked[:5])
+          print("no data/ in either distribution")
+          PY
