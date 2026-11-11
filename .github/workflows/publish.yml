@@ -43,3 +43,7 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Re-publishing an existing release must not fail the run: a
+          # PyPI version is immutable, so a repeat upload is a no-op.
+          skip-existing: true
