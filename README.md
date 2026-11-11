@@ -33,11 +33,11 @@ Calibration and measurement data must use the same exposure, detector readout, b
 
 ## Examples
 
-- [RACER-2D, image readout](notebooks/racer-2d.ipynb)
-- [RACER-1D, batch row-summed spectra](notebooks/racer-1d.ipynb)
+- [RACER-2D, image readout](https://github.com/JasonYu1/racer-raman/blob/main/notebooks/racer-2d.ipynb)
+- [RACER-1D, batch row-summed spectra](https://github.com/JasonYu1/racer-raman/blob/main/notebooks/racer-1d.ipynb)
 
-Measured closed-shutter and polystyrene Zarr data are included under [data](data/).
+Measured closed-shutter and polystyrene Zarr data are included under [data](https://github.com/JasonYu1/racer-raman/tree/main/data).
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/JasonYu1/racer-raman/blob/main/LICENSE).
