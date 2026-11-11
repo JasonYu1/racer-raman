@@ -12,7 +12,11 @@ Two methods, one per detector readout mode:
   distributions and local spectral structure, switching between an
   empirical-Bayes branch and a masked-baseline branch on bright bands.
 
-Install from the repository root with `pip install -e .`.
+```bash
+pip install racer-raman
+```
+
+Or `pip install -e .` from a clone of the repository, to work on the code.
 
 ```python
 from racer_raman import ImageCalibrator, SpectrumCalibrator
