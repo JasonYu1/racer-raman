@@ -34,5 +34,4 @@ copies of the corresponding source arrays. Acquisition timestamps, local paths,
 stage coordinates, instrument-control identifiers, and unrelated metadata are
 omitted.
 
-These excerpts are included at the repository owner's direction. Add explicit
-data-redistribution terms before changing the repository from private to public.
+These excerpts are included at the repository owner's direction.
