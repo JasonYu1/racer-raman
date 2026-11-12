@@ -211,8 +211,8 @@ class ImageConfig:
     poisson_maximum_terms: int = 128
     poisson_chunk_pixels: int = 2048
     seed_residual_z: float = 1.0
-    curvature_threshold: float = 2.5
-    growth_residual_z: float = 2.25
+    curvature_threshold: float = 8.0
+    growth_residual_z: float = 4.0
     ring_radii: tuple[int, ...] = (1, 2)
     ring_minimum_counts: tuple[int, ...] = (3, 8)
     use_diagonal_connectivity: bool = True
@@ -220,7 +220,7 @@ class ImageConfig:
     uncertainty_inflation: float = 1.0
     halo_radius: int = 1
     halo_residual_z: float = 0.0
-    halo_conditional_prior: float = 0.5
+    halo_conditional_prior: float = 0.0875
 
     def validate(self) -> None:
         positive = (
