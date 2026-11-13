@@ -1,5 +1,8 @@
 # RACER
 
+[![CI](https://github.com/JasonYu1/racer-raman/actions/workflows/ci.yml/badge.svg)](https://github.com/JasonYu1/racer-raman/actions/workflows/ci.yml)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.24124902.svg)](https://doi.org/10.5281/zenodo.24124902)
+
 Readout-aware cosmic-ray event removal for Raman spectroscopy.
 
 Two methods, one per detector readout mode:
